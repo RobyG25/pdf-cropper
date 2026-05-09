@@ -161,31 +161,22 @@ function buildCard(i){
 async function renderPage(i,plibDoc){
   const idx=i-1;
   const pjsPage=await pdfJsDoc.getPage(i);
-  // Get page rotation and compute correct viewport
-  // Some PDFs have pages rotated 90/180/270 — we render with rotation=0
-  // and apply CSS transform so the preview looks correct
-  const baseVp=pjsPage.getViewport({scale:1, rotation:0});
-  // Use the larger dimension to compute scale, so rotated pages aren't tiny
-  const baseLong = Math.max(baseVp.width, baseVp.height);
-  const scale = Math.min(Math.max(900/baseLong, 1.0), 4.0);
-  const vp=pjsPage.getViewport({scale, rotation:0});
-  const canvas=document.createElement('canvas');
-  canvas.width=vp.width;canvas.height=vp.height;
-
-  // Apply CSS rotation if the page has an inherent rotation
+  // Store the page's natural rotation (used later for crop coordinate math)
   const pageRotation = pjsPage.rotate || 0;
-  if(pageRotation===90||pageRotation===270){
-    canvas.style.transform=`rotate(${pageRotation}deg)`;
-    canvas.style.transformOrigin='center center';
-    // Swap wrap dimensions so card fits rotated canvas
-    canvas.style.margin = `${(vp.width-vp.height)/2}px ${(vp.height-vp.width)/2}px`;
-  } else if(pageRotation===180){
-    canvas.style.transform='rotate(180deg)';
-    canvas.style.transformOrigin='center center';
-  }
   pages[idx].pageRotation = pageRotation;
 
-  await pjsPage.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+  // Let PDF.js apply its own rotation — this gives the correct visual result.
+  // We compute scale based on the ROTATED viewport so rotated pages fill the card properly.
+  const baseVp = pjsPage.getViewport({scale: 1});   // includes natural rotation
+  const baseLong = Math.max(baseVp.width, baseVp.height);
+  const scale = Math.min(Math.max(900 / baseLong, 1.0), 4.0);
+  const vp = pjsPage.getViewport({scale});           // natural rotation, correct scale
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = vp.width;
+  canvas.height = vp.height;
+
+  await pjsPage.render({canvasContext: canvas.getContext('2d'), viewport: vp}).promise;
 
   const wrap=document.getElementById(`wrap-${i}`);
   wrap.innerHTML='';wrap.appendChild(canvas);
@@ -301,41 +292,47 @@ async function downloadCropped(){
       if(!pd||!pd.crop)continue;
 
       // ── Convert canvas crop → PDF point space ──────────────────────────────
-      // Must account for page rotation: canvas is always rendered at rotation=0,
-      // but the PDF coordinate system may be rotated.
+      // PDF.js renders with native rotation, so canvas axes already match the
+      // visual. We just need to map canvas pixels → PDF user-space points.
+      // PDF.js viewport tells us exactly the canvas→PDF transform via its
+      // transform matrix, but the simplest correct approach:
+      //   canvasW/H already reflects the rotated page dimensions,
+      //   pdfW/H are the MediaBox dims (pre-rotation).
       const rot = pd.pageRotation || 0;
       let cropX, cropY, cropW, cropH;
 
-      if(rot === 90) {
-        // Canvas X → PDF Y (from bottom), Canvas Y → PDF X
-        const scx = pd.pdfH / pd.canvasW;
-        const scy = pd.pdfW / pd.canvasH;
-        cropX = pd.pdfX + pd.crop.y * scy;
-        cropY = pd.pdfY + pd.pdfH - (pd.crop.x + pd.crop.w) * scx;
-        cropW = pd.crop.h * scy;
-        cropH = pd.crop.w * scx;
-      } else if(rot === 270) {
-        const scx = pd.pdfH / pd.canvasW;
-        const scy = pd.pdfW / pd.canvasH;
-        cropX = pd.pdfX + pd.pdfW - (pd.crop.y + pd.crop.h) * scy;
-        cropY = pd.pdfY + pd.crop.x * scx;
-        cropW = pd.crop.h * scy;
-        cropH = pd.crop.w * scx;
+      // For rotated pages, canvas W corresponds to PDF H and vice-versa
+      const isLandscape = (rot === 90 || rot === 270);
+      const pdfVisW = isLandscape ? pd.pdfH : pd.pdfW; // visual width in PDF space
+      const pdfVisH = isLandscape ? pd.pdfW : pd.pdfH; // visual height in PDF space
+
+      const scx = pdfVisW / pd.canvasW;
+      const scy = pdfVisH / pd.canvasH;
+
+      // Crop in visual/canvas space (top-left origin):
+      const visX = pd.crop.x * scx;
+      const visY = pd.crop.y * scy;
+      const visW = pd.crop.w * scx;
+      const visH = pd.crop.h * scy;
+
+      // Convert visual space → PDF user space (bottom-left origin, accounting for rotation)
+      if(rot === 0) {
+        cropX = pd.pdfX + visX;
+        cropY = pd.pdfY + pd.pdfH - (visY + visH);
+        cropW = visW; cropH = visH;
+      } else if(rot === 90) {
+        // PDF origin is bottom-left of unrotated page
+        cropX = pd.pdfX + visY;
+        cropY = pd.pdfY + visX;
+        cropW = visH; cropH = visW;
       } else if(rot === 180) {
-        const scx = pd.pdfW / pd.canvasW;
-        const scy = pd.pdfH / pd.canvasH;
-        cropX = pd.pdfX + pd.pdfW - (pd.crop.x + pd.crop.w) * scx;
-        cropY = pd.pdfY + pd.crop.y * scy;
-        cropW = pd.crop.w * scx;
-        cropH = pd.crop.h * scy;
-      } else {
-        // rot === 0, normal case
-        const scx = pd.pdfW / pd.canvasW;
-        const scy = pd.pdfH / pd.canvasH;
-        cropX = pd.pdfX + pd.crop.x * scx;
-        cropY = pd.pdfY + (pd.pdfH - (pd.crop.y + pd.crop.h) * scy);
-        cropW = pd.crop.w * scx;
-        cropH = pd.crop.h * scy;
+        cropX = pd.pdfX + pd.pdfW - (visX + visW);
+        cropY = pd.pdfY + visY;
+        cropW = visW; cropH = visH;
+      } else { // 270
+        cropX = pd.pdfX + pd.pdfW - (visY + visH);
+        cropY = pd.pdfY + pd.pdfH - (visX + visW);
+        cropW = visH; cropH = visW;
       }
 
       // ── Embed the source page as a Form XObject ────────────────────────────
