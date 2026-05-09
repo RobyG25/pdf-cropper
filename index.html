@@ -83,6 +83,7 @@
         <button class="btn btn-ghost btn-sm" onclick="resetAll()">🔄 קובץ חדש</button>
       </div>
       <div style="display:flex;align-items:center;gap:.75rem">
+        <button class="btn btn-ghost btn-sm" onclick="resetAll()" title="טען קובץ אחר">📂 קובץ חדש</button>
         <button class="btn btn-success" id="dlBtn" onclick="downloadCropped()" disabled>⬇️ הורד PDF מחותך</button>
       </div>
     </div>
@@ -105,7 +106,10 @@ let pdfBytes=null, pdfJsDoc=null, numPages=0;
 const pages=[];   // {canvasEl,canvasW,canvasH,pdfW,pdfH,pdfX,pdfY,crop,overlayEl}
 
 // ── File ──────────────────────────────────────────────────────────────────────
-document.getElementById('fileInput').addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0])});
+const fi=document.getElementById('fileInput');
+fi.addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0])});
+// Allow re-selecting the same file after reset
+fi.addEventListener('click',()=>{fi.value='';});
 const dz=document.getElementById('dropZone');
 dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover')});
 dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
@@ -157,7 +161,10 @@ function buildCard(i){
 async function renderPage(i,plibDoc){
   const idx=i-1;
   const pjsPage=await pdfJsDoc.getPage(i);
-  const vp=pjsPage.getViewport({scale:1.6});
+  // Dynamic scale: aim for 900px wide so all page sizes render fully
+  const baseVp=pjsPage.getViewport({scale:1});
+  const scale=Math.min(Math.max(900/baseVp.width,1.2),3.5);
+  const vp=pjsPage.getViewport({scale});
   const canvas=document.createElement('canvas');
   canvas.width=vp.width;canvas.height=vp.height;
   await pjsPage.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
@@ -357,7 +364,9 @@ function resetAll(){
   document.getElementById('dropZone').style.display='';
   document.getElementById('dlBtn').disabled=true;
   document.getElementById('fileInput').value='';
-  document.getElementById('statusMsg').textContent='';
+  const sm=document.getElementById('statusMsg');if(sm)sm.textContent='';
+  const pw=document.getElementById('progressWrap');if(pw)pw.style.display='none';
+  window.scrollTo(0,0);
 }
 </script>
 </body>
