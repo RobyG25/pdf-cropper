@@ -3,707 +3,361 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PDF Cropper — חיתוך עמודים</title>
+<title>PDF Cropper — חיתוך אמיתי</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700&display=swap');
-
   :root {
-    --bg: #0f0f13;
-    --surface: #1a1a22;
-    --surface2: #22222d;
-    --border: #2e2e3d;
-    --accent: #6c63ff;
-    --accent2: #ff6584;
-    --text: #e8e8f0;
-    --text2: #8888a0;
-    --success: #4caf82;
-    --radius: 12px;
+    --bg:#0f0f13;--surface:#1a1a22;--surface2:#22222d;--border:#2e2e3d;
+    --accent:#6c63ff;--text:#e8e8f0;--text2:#8888a0;--success:#4caf82;--radius:12px;
   }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: 'Heebo', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    direction: ltr;
-  }
-
-  header {
-    padding: 1.5rem 2rem;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    background: var(--surface);
-  }
-
-  .logo {
-    width: 38px; height: 38px;
-    background: var(--accent);
-    border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 18px;
-  }
-
-  header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
-  header p { font-size: 13px; color: var(--text2); direction: rtl; }
-
-  .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-
-  /* Drop Zone */
-  #dropZone {
-    border: 2px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 4rem 2rem;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.2s;
-    background: var(--surface);
-  }
-  #dropZone:hover, #dropZone.dragover {
-    border-color: var(--accent);
-    background: rgba(108,99,255,0.07);
-  }
-  #dropZone .icon { font-size: 48px; margin-bottom: 1rem; }
-  #dropZone h2 { font-size: 22px; font-weight: 500; margin-bottom: 0.5rem; }
-  #dropZone p { color: var(--text2); font-size: 14px; direction: rtl; }
-  #fileInput { display: none; }
-
-  .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 20px;
-    border-radius: 8px;
-    border: none;
-    cursor: pointer;
-    font-family: 'Heebo', sans-serif;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover { background: #7c74ff; }
-  .btn-primary:disabled { background: #444; color: #666; cursor: not-allowed; }
-  .btn-ghost { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
-  .btn-success { background: var(--success); color: #fff; }
-  .btn-success:hover { background: #5dc797; }
-
-  /* Main layout after file loaded */
-  #mainLayout {
-    display: none;
-    gap: 1.5rem;
-  }
-  #mainLayout.active { display: flex; flex-direction: column; }
-
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 1rem 1.5rem;
-    border: 1px solid var(--border);
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  .toolbar-left { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-  .toolbar-right { display: flex; align-items: center; gap: 0.75rem; }
-
-  .file-info { font-size: 13px; color: var(--text2); }
-  .file-info strong { color: var(--text); }
-
-  /* Page grid */
-  #pagesGrid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.5rem;
-  }
-
-  .page-card {
-    background: var(--surface);
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    overflow: hidden;
-    transition: border-color 0.2s;
-  }
-  .page-card.active { border-color: var(--accent); }
-
-  .page-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface2);
-  }
-  .page-label { font-size: 13px; font-weight: 500; }
-  .page-dims { font-size: 11px; color: var(--text2); }
-
-  .canvas-wrap {
-    position: relative;
-    background: #111;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 200px;
-    overflow: hidden;
-    cursor: crosshair;
-    user-select: none;
-  }
-
-  .canvas-wrap canvas { display: block; max-width: 100%; }
-
-  .crop-overlay {
-    position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    pointer-events: none;
-  }
-
-  /* The dark overlay around the crop area */
-  .mask-top, .mask-bottom, .mask-left, .mask-right {
-    position: absolute;
-    background: rgba(0,0,0,0.55);
-    pointer-events: none;
-    transition: none;
-  }
-
-  .crop-rect {
-    position: absolute;
-    border: 2px solid var(--accent);
-    box-shadow: 0 0 0 1px rgba(108,99,255,0.3);
-    pointer-events: none;
-  }
-
-  .crop-handle {
-    position: absolute;
-    width: 10px; height: 10px;
-    background: var(--accent);
-    border-radius: 2px;
-    pointer-events: all;
-    cursor: pointer;
-  }
-
-  .page-controls {
-    padding: 0.75rem 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    border-top: 1px solid var(--border);
-  }
-
-  .crop-values {
-    font-size: 11px;
-    color: var(--text2);
-    margin-right: auto;
-    direction: rtl;
-  }
-  .crop-values span { color: var(--accent); font-weight: 500; }
-
-  .progress-bar {
-    width: 100%;
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 0.5rem;
-  }
-  .progress-fill {
-    height: 100%;
-    background: var(--accent);
-    border-radius: 2px;
-    transition: width 0.3s;
-    width: 0%;
-  }
-
-  #status {
-    font-size: 13px;
-    color: var(--text2);
-    padding: 0.5rem 0;
-    direction: rtl;
-  }
-
-  .badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background: rgba(108,99,255,0.15);
-    color: var(--accent);
-    border: 1px solid rgba(108,99,255,0.3);
-  }
-
-  .badge.has-crop {
-    background: rgba(76,175,130,0.15);
-    color: var(--success);
-    border-color: rgba(76,175,130,0.3);
-  }
-
-  .loading-spinner {
-    width: 32px; height: 32px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin: 2rem auto;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .apply-all-btn {
-    font-size: 12px;
-    padding: 6px 12px;
-  }
-
-  @media (max-width: 600px) {
-    .container { padding: 1rem; }
-    #pagesGrid { grid-template-columns: 1fr; }
-  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Heebo',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;direction:ltr}
+  header{padding:1.25rem 2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:1rem;background:var(--surface)}
+  .logo{width:36px;height:36px;background:var(--accent);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px}
+  header h1{font-size:19px;font-weight:700}
+  header p{font-size:12px;color:var(--text2);direction:rtl}
+  .container{max-width:1400px;margin:0 auto;padding:1.5rem 2rem}
+  #dropZone{border:2px dashed var(--border);border-radius:var(--radius);padding:4rem 2rem;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface)}
+  #dropZone:hover,#dropZone.dragover{border-color:var(--accent);background:rgba(108,99,255,.07)}
+  #dropZone .icon{font-size:44px;margin-bottom:1rem}
+  #dropZone h2{font-size:20px;font-weight:500;margin-bottom:.4rem}
+  #dropZone p{color:var(--text2);font-size:13px;direction:rtl}
+  #fileInput{display:none}
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:9px 18px;border-radius:8px;border:none;cursor:pointer;font-family:'Heebo',sans-serif;font-size:13px;font-weight:500;transition:all .15s}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:#7c74ff}
+  .btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+  .btn-success{background:var(--success);color:#fff}
+  .btn-success:hover{background:#5dc797}
+  .btn-success:disabled,.btn-ghost:disabled{opacity:.4;cursor:not-allowed}
+  .btn-sm{padding:5px 11px;font-size:12px}
+  #mainLayout{display:none;gap:1.25rem;flex-direction:column}
+  #mainLayout.active{display:flex}
+  .toolbar{display:flex;align-items:center;justify-content:space-between;background:var(--surface);border-radius:var(--radius);padding:.9rem 1.25rem;border:1px solid var(--border);flex-wrap:wrap;gap:.75rem}
+  .toolbar-left{display:flex;align-items:center;gap:.9rem;flex-wrap:wrap}
+  .file-info{font-size:13px;color:var(--text2)}
+  .file-info strong{color:var(--text)}
+  #hint{font-size:12px;color:var(--text2);direction:rtl;padding:.25rem 0}
+  #pagesGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.25rem}
+  .page-card{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;transition:border-color .2s}
+  .page-card.has-crop{border-color:rgba(108,99,255,.5)}
+  .card-head{display:flex;align-items:center;justify-content:space-between;padding:.65rem .9rem;background:var(--surface2);border-bottom:1px solid var(--border)}
+  .page-label{font-size:13px;font-weight:500}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;background:rgba(255,255,255,.06);color:var(--text2);border:1px solid var(--border)}
+  .badge.ok{background:rgba(76,175,130,.15);color:var(--success);border-color:rgba(76,175,130,.3)}
+  .canvas-wrap{position:relative;background:#0a0a0e;display:flex;align-items:center;justify-content:center;min-height:180px;cursor:crosshair;user-select:none;overflow:hidden}
+  .canvas-wrap canvas{display:block;max-width:100%}
+  .card-foot{padding:.6rem .9rem;display:flex;align-items:center;gap:.5rem;border-top:1px solid var(--border);flex-wrap:wrap}
+  .crop-info{font-size:11px;color:var(--text2);margin-right:auto;direction:rtl}
+  .crop-info span{color:var(--accent)}
+  .spinner{width:28px;height:28px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;margin:2rem auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .progress-bar{height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+  .progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .25s;width:0}
+  #statusMsg{font-size:12px;color:var(--text2);margin-top:.4rem;direction:rtl;min-height:1.2em}
+  @media(max-width:600px){.container{padding:1rem}#pagesGrid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-
 <header>
   <div class="logo">✂️</div>
   <div>
     <h1>PDF Cropper</h1>
-    <p>חתוך כל עמוד בנפרד — HARD CODED בקובץ</p>
+    <p>חיתוך אמיתי — התוכן מחוץ לאזור נמחק לגמרי מהקובץ</p>
   </div>
 </header>
-
 <div class="container">
-
-  <!-- Drop Zone -->
   <div id="dropZone" onclick="document.getElementById('fileInput').click()">
     <div class="icon">📄</div>
     <h2>גרור PDF לכאן</h2>
-    <p>או לחץ לבחירת קובץ</p>
-    <br>
-    <button class="btn btn-primary" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">📂 בחר קובץ PDF</button>
-    <input type="file" id="fileInput" accept=".pdf" />
+    <p>או לחץ לבחירת קובץ</p><br>
+    <button class="btn btn-primary" onclick="event.stopPropagation();document.getElementById('fileInput').click()">📂 בחר קובץ PDF</button>
+    <input type="file" id="fileInput" accept=".pdf">
   </div>
 
-  <!-- Main layout -->
   <div id="mainLayout">
-
     <div class="toolbar">
       <div class="toolbar-left">
-        <div class="file-info">
-          קובץ: <strong id="fileName">—</strong> &nbsp;|&nbsp;
-          עמודים: <strong id="pageCount">—</strong>
-        </div>
-        <button class="btn btn-ghost" onclick="resetAll()" style="font-size:13px; padding:6px 14px;">🔄 קובץ חדש</button>
+        <div class="file-info"><strong id="fileName">—</strong> &nbsp;·&nbsp; <strong id="pageCount">—</strong> עמודים</div>
+        <button class="btn btn-ghost btn-sm" onclick="resetAll()">🔄 קובץ חדש</button>
       </div>
-      <div class="toolbar-right">
-        <div id="status"></div>
-        <button class="btn btn-success" id="downloadBtn" onclick="downloadCropped()" disabled>
-          ⬇️ הורד PDF מחותך
-        </button>
+      <div style="display:flex;align-items:center;gap:.75rem">
+        <button class="btn btn-success" id="dlBtn" onclick="downloadCropped()" disabled>⬇️ הורד PDF מחותך</button>
       </div>
     </div>
-
-    <div id="progressWrap" style="display:none;">
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div id="progressWrap" style="display:none">
+      <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+      <div id="statusMsg"></div>
     </div>
-
-    <p style="font-size: 13px; color: var(--text2); direction: rtl; padding: 0 0.25rem;">
-      ✏️ גרור עם העכבר על כל עמוד כדי לסמן את אזור החיתוך. ניתן לשנות את הבחירה בכל עת.
-    </p>
-
+    <p id="hint">✏️ גרור עם העכבר על כל עמוד לסימון אזור החיתוך. "החל על כולם" מעתיק חיתוך לכל העמודים.</p>
     <div id="pagesGrid"></div>
-
   </div>
 </div>
 
-<!-- pdf-lib -->
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-<!-- PDF.js -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-let pdfDoc = null;      // pdf-lib doc
-let pdfJsDoc = null;    // pdfjs doc
-let pdfBytes = null;    // original bytes
-let numPages = 0;
-let pageData = [];      // { canvas, cropRect: {x,y,w,h} in canvas px, pdfDims: {w,h} }
+let pdfBytes=null, pdfJsDoc=null, numPages=0;
+const pages=[];   // {canvasEl,canvasW,canvasH,pdfW,pdfH,pdfX,pdfY,crop,overlayEl}
 
-// ─── File input ───────────────────────────────────────────────────────────────
-const fileInput = document.getElementById('fileInput');
-fileInput.addEventListener('change', e => { if (e.target.files[0]) loadPDF(e.target.files[0]); });
+// ── File ──────────────────────────────────────────────────────────────────────
+document.getElementById('fileInput').addEventListener('change',e=>{if(e.target.files[0])loadFile(e.target.files[0])});
+const dz=document.getElementById('dropZone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover')});
+dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');if(e.dataTransfer.files[0])loadFile(e.dataTransfer.files[0])});
 
-const dropZone = document.getElementById('dropZone');
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-  if (e.dataTransfer.files[0]) loadPDF(e.dataTransfer.files[0]);
-});
-
-async function loadPDF(file) {
-  setStatus('טוען קובץ...', false);
-  dropZone.style.display = 'none';
+async function loadFile(file){
+  dz.style.display='none';
   document.getElementById('mainLayout').classList.add('active');
-  document.getElementById('fileName').textContent = file.name;
+  document.getElementById('fileName').textContent=file.name;
+  showProg(0,1,'טוען...');
+  pdfBytes=await file.arrayBuffer();
+  pdfJsDoc=await pdfjsLib.getDocument({data:pdfBytes.slice(0)}).promise;
+  numPages=pdfJsDoc.numPages;
+  document.getElementById('pageCount').textContent=numPages;
+  pages.length=0;
+  document.getElementById('pagesGrid').innerHTML='';
 
-  pdfBytes = await file.arrayBuffer();
+  // Pre-load pdf-lib once for all page dims
+  const plibDoc=await PDFLib.PDFDocument.load(pdfBytes);
 
-  // Load with pdfjs for rendering
-  pdfJsDoc = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
-  // Load with pdf-lib for editing
-  pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
-
-  numPages = pdfJsDoc.numPages;
-  document.getElementById('pageCount').textContent = numPages;
-  pageData = new Array(numPages).fill(null).map(() => ({ cropRect: null, pdfDims: null, canvasDims: null }));
-
-  showProgress(0, numPages);
-  document.getElementById('progressWrap').style.display = 'block';
-
-  await renderAllPages();
-
-  document.getElementById('progressWrap').style.display = 'none';
-  setStatus('✅ כל העמודים נטענו. גרור על עמוד לסימון אזור חיתוך.', false);
-  document.getElementById('downloadBtn').disabled = false;
-}
-
-async function renderAllPages() {
-  const grid = document.getElementById('pagesGrid');
-  grid.innerHTML = '';
-
-  for (let i = 1; i <= numPages; i++) {
-    const card = createPageCard(i);
-    grid.appendChild(card);
-    showProgress(i, numPages);
-    await renderPage(i, card);
+  for(let i=1;i<=numPages;i++){
+    showProg(i-1,numPages,`מרנדר עמוד ${i}/${numPages}...`);
+    buildCard(i);
+    await renderPage(i,plibDoc);
   }
+  hideProg();
+  document.getElementById('dlBtn').disabled=false;
 }
 
-function createPageCard(pageNum) {
-  const card = document.createElement('div');
-  card.className = 'page-card';
-  card.id = `card-${pageNum}`;
-  card.innerHTML = `
-    <div class="page-card-header">
-      <span class="page-label">עמוד ${pageNum}</span>
-      <span class="badge" id="badge-${pageNum}">ללא חיתוך</span>
+function buildCard(i){
+  const grid=document.getElementById('pagesGrid');
+  const card=document.createElement('div');
+  card.className='page-card';card.id=`card-${i}`;
+  card.innerHTML=`
+    <div class="card-head">
+      <span class="page-label">עמוד ${i}</span>
+      <span class="badge" id="badge-${i}">ללא חיתוך</span>
     </div>
-    <div class="canvas-wrap" id="wrap-${pageNum}">
-      <div class="loading-spinner"></div>
-    </div>
-    <div class="page-controls">
-      <span class="crop-values" id="vals-${pageNum}">—</span>
-      <button class="btn btn-ghost apply-all-btn" onclick="applyToAll(${pageNum})">📋 החל על כל העמודים</button>
-      <button class="btn btn-ghost apply-all-btn" onclick="clearCrop(${pageNum})">✖ נקה</button>
-    </div>
-  `;
-  return card;
+    <div class="canvas-wrap" id="wrap-${i}"><div class="spinner"></div></div>
+    <div class="card-foot">
+      <span class="crop-info" id="info-${i}">—</span>
+      <button class="btn btn-ghost btn-sm" onclick="applyToAll(${i})">📋 החל על כולם</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearCrop(${i})">✖</button>
+    </div>`;
+  grid.appendChild(card);
+  pages[i-1]={canvasEl:null,canvasW:0,canvasH:0,pdfW:0,pdfH:0,pdfX:0,pdfY:0,crop:null,overlayEl:null};
 }
 
-async function renderPage(pageNum, card) {
-  const page = await pdfJsDoc.getPage(pageNum);
-  const viewport = page.getViewport({ scale: 1.5 });
+async function renderPage(i,plibDoc){
+  const idx=i-1;
+  const pjsPage=await pdfJsDoc.getPage(i);
+  const vp=pjsPage.getViewport({scale:1.6});
+  const canvas=document.createElement('canvas');
+  canvas.width=vp.width;canvas.height=vp.height;
+  await pjsPage.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
+  const wrap=document.getElementById(`wrap-${i}`);
+  wrap.innerHTML='';wrap.appendChild(canvas);
 
-  const ctx = canvas.getContext('2d');
-  await page.render({ canvasContext: ctx, viewport }).promise;
+  const plibPage=plibDoc.getPage(idx);
+  const mb=plibPage.getMediaBox();
 
-  const wrap = document.getElementById(`wrap-${pageNum}`);
-  wrap.innerHTML = '';
-  wrap.appendChild(canvas);
+  pages[idx].canvasEl=canvas;
+  pages[idx].canvasW=canvas.width;pages[idx].canvasH=canvas.height;
+  pages[idx].pdfW=mb.width;pages[idx].pdfH=mb.height;
+  pages[idx].pdfX=mb.x||0;pages[idx].pdfY=mb.y||0;
 
-  // Store dims
-  const pdfPage = pdfDoc.getPage(pageNum - 1);
-  const { width: pw, height: ph } = pdfPage.getMediaBox();
-  pageData[pageNum - 1].pdfDims = { w: pw, h: ph };
-  pageData[pageNum - 1].canvasDims = { w: canvas.width, h: canvas.height };
-
-  setupCropInteraction(pageNum, wrap, canvas);
+  attachDrag(i,wrap,canvas);
 }
 
-// ─── Crop interaction ─────────────────────────────────────────────────────────
-function setupCropInteraction(pageNum, wrap, canvas) {
-  let drawing = false;
-  let startX, startY;
-  let overlayEl = null;
-
-  function getPos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    return {
-      x: Math.max(0, Math.min(canvas.width, (clientX - rect.left) * scaleX)),
-      y: Math.max(0, Math.min(canvas.height, (clientY - rect.top) * scaleY))
-    };
+// ── Drag ──────────────────────────────────────────────────────────────────────
+function attachDrag(i,wrap,canvas){
+  let active=false,sx=0,sy=0;
+  function cpos(e){
+    const r=canvas.getBoundingClientRect();
+    const kx=canvas.width/r.width,ky=canvas.height/r.height;
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    return{x:Math.max(0,Math.min(canvas.width,(cx-r.left)*kx)),
+           y:Math.max(0,Math.min(canvas.height,(cy-r.top)*ky))};
   }
+  canvas.addEventListener('mousedown',e=>{if(e.button!==0)return;active=true;({x:sx,y:sy}=cpos(e));e.preventDefault()});
+  canvas.addEventListener('touchstart',e=>{active=true;({x:sx,y:sy}=cpos(e));e.preventDefault()},{passive:false});
+  window.addEventListener('mousemove',e=>{if(!active)return;const p=cpos(e);drawOv(i,sx,sy,p.x,p.y)});
+  canvas.addEventListener('touchmove',e=>{if(!active)return;const p=cpos(e);drawOv(i,sx,sy,p.x,p.y);e.preventDefault()},{passive:false});
+  function fin(ex,ey){
+    if(!active)return;active=false;
+    const x=Math.min(sx,ex),y=Math.min(sy,ey),w=Math.abs(ex-sx),h=Math.abs(ey-sy);
+    if(w>5&&h>5){pages[i-1].crop={x,y,w,h};drawOv(i,sx,sy,ex,ey);updateBadge(i)}
+    else clearCrop(i);
+  }
+  window.addEventListener('mouseup',e=>{const p=cpos(e);fin(p.x,p.y)});
+  canvas.addEventListener('touchend',e=>{
+    const t=e.changedTouches[0],r=canvas.getBoundingClientRect();
+    const kx=canvas.width/r.width,ky=canvas.height/r.height;
+    fin((t.clientX-r.left)*kx,(t.clientY-r.top)*ky);
+  });
+}
 
-  function drawOverlay(x1, y1, x2, y2) {
-    if (!overlayEl) {
-      overlayEl = document.createElement('div');
-      overlayEl.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;`;
-      wrap.style.position = 'relative';
-      wrap.appendChild(overlayEl);
+function drawOv(i,x1,y1,x2,y2){
+  const pd=pages[i-1];const wrap=document.getElementById(`wrap-${i}`);
+  if(!pd.canvasEl)return;
+  if(!pd.overlayEl){
+    pd.overlayEl=document.createElement('div');
+    pd.overlayEl.style.cssText='position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+    wrap.style.position='relative';wrap.appendChild(pd.overlayEl);
+  }
+  const r=pd.canvasEl.getBoundingClientRect();
+  const kx=r.width/pd.canvasW,ky=r.height/pd.canvasH;
+  const rx=Math.min(x1,x2)*kx,ry=Math.min(y1,y2)*ky;
+  const rw=Math.abs(x2-x1)*kx,rh=Math.abs(y2-y1)*ky;
+  const pw=r.width;
+  pd.overlayEl.innerHTML=`
+    <div style="position:absolute;top:0;left:0;width:${pw}px;height:${ry}px;background:rgba(0,0,0,.55)"></div>
+    <div style="position:absolute;top:${ry+rh}px;left:0;width:${pw}px;bottom:0;background:rgba(0,0,0,.55)"></div>
+    <div style="position:absolute;top:${ry}px;left:0;width:${rx}px;height:${rh}px;background:rgba(0,0,0,.55)"></div>
+    <div style="position:absolute;top:${ry}px;left:${rx+rw}px;right:0;height:${rh}px;background:rgba(0,0,0,.55)"></div>
+    <div style="position:absolute;top:${ry}px;left:${rx}px;width:${rw}px;height:${rh}px;border:2px solid #6c63ff"></div>`;
+  const scx=pd.pdfW/pd.canvasW,scy=pd.pdfH/pd.canvasH;
+  document.getElementById(`info-${i}`).innerHTML=
+    `גודל: <span>${Math.round(Math.abs(x2-x1)*scx)} × ${Math.round(Math.abs(y2-y1)*scy)}</span> pt`;
+}
+
+function updateBadge(i){
+  const b=document.getElementById(`badge-${i}`),c=document.getElementById(`card-${i}`);
+  if(pages[i-1].crop){b.textContent='✓ מסומן';b.className='badge ok';c.classList.add('has-crop')}
+  else{b.textContent='ללא חיתוך';b.className='badge';c.classList.remove('has-crop')}
+}
+function clearCrop(i){
+  pages[i-1].crop=null;
+  if(pages[i-1].overlayEl)pages[i-1].overlayEl.innerHTML='';
+  document.getElementById(`info-${i}`).innerHTML='—';
+  updateBadge(i);
+}
+function applyToAll(src){
+  const pd=pages[src-1];
+  if(!pd.crop){alert('סמן חיתוך בעמוד הזה קודם.');return}
+  const rx=pd.crop.x/pd.canvasW,ry=pd.crop.y/pd.canvasH;
+  const rw=pd.crop.w/pd.canvasW,rh=pd.crop.h/pd.canvasH;
+  for(let i=1;i<=numPages;i++){
+    if(i===src)continue;
+    const t=pages[i-1];if(!t.canvasW)continue;
+    t.crop={x:rx*t.canvasW,y:ry*t.canvasH,w:rw*t.canvasW,h:rh*t.canvasH};
+    drawOv(i,t.crop.x,t.crop.y,t.crop.x+t.crop.w,t.crop.y+t.crop.h);
+    updateBadge(i);
+  }
+}
+
+// ── TRUE HARD-CODED CROP ──────────────────────────────────────────────────────
+// Technique: create new page of crop size, embed original as Form XObject,
+// apply clipping rect, translate so crop origin → (0,0), draw XObject.
+// The original content outside crop region simply does not exist in the output.
+async function downloadCropped(){
+  document.getElementById('dlBtn').disabled=true;
+  showProg(0,numPages,'מכין...');
+  try{
+    const doc=await PDFLib.PDFDocument.load(pdfBytes);
+    // We need a separate source to embed pages from
+    const srcDoc=await PDFLib.PDFDocument.load(pdfBytes);
+    const total=doc.getPageCount();
+
+    for(let i=1;i<=total;i++){
+      showProg(i-1,total,`מחתך עמוד ${i}/${total}...`);
+      const pd=pages[i-1];
+      if(!pd||!pd.crop)continue;
+
+      // Convert crop from canvas coords to PDF points
+      const scx=pd.pdfW/pd.canvasW, scy=pd.pdfH/pd.canvasH;
+      // Canvas: top-left origin. PDF: bottom-left origin.
+      const cropX = pd.pdfX + pd.crop.x * scx;
+      const cropY = pd.pdfY + pd.pdfH - (pd.crop.y + pd.crop.h) * scy;
+      const cropW = pd.crop.w * scx;
+      const cropH = pd.crop.h * scy;
+
+      // Embed source page as XObject
+      const [xobj] = await doc.embedPages([srcDoc.getPage(i-1)]);
+
+      // Get existing page and reset it
+      const pg = doc.getPage(i-1);
+
+      // Set page to crop dimensions
+      pg.setSize(cropW, cropH);
+      pg.setMediaBox(0, 0, cropW, cropH);
+      pg.setCropBox(0, 0, cropW, cropH);
+      pg.setBleedBox(0, 0, cropW, cropH);
+      pg.setTrimBox(0, 0, cropW, cropH);
+
+      // Build content stream:
+      //   q                          — save state
+      //   0 0 cropW cropH re W n     — clipping rectangle, fill nothing
+      //   1 0 0 1 -cropX -cropY cm   — translate so crop origin = (0,0)
+      //   /XObj Do                   — draw embedded page
+      //   Q                          — restore state
+      const xKey = xobj.key.replace(/^\//,'');
+      const stream = [
+        'q',
+        `0 0 ${f(cropW)} ${f(cropH)} re W n`,
+        `1 0 0 1 ${f(-cropX)} ${f(-cropY)} cm`,
+        `/${xKey} Do`,
+        'Q'
+      ].join('\n');
+
+      const streamRef = doc.context.register(
+        doc.context.stream(stream,{Length:stream.length})
+      );
+      pg.node.set(PDFLib.PDFName.of('Contents'), streamRef);
+
+      // Register XObject in page resources
+      let res = pg.node.get(PDFLib.PDFName.of('Resources'));
+      if(!res){res=doc.context.obj({});pg.node.set(PDFLib.PDFName.of('Resources'),res)}
+      let xobjs = res.get(PDFLib.PDFName.of('XObject'));
+      if(!xobjs){xobjs=doc.context.obj({});res.set(PDFLib.PDFName.of('XObject'),xobjs)}
+      xobjs.set(PDFLib.PDFName.of(xKey), xobj.ref);
     }
 
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = rect.width / canvas.width;
-    const scaleY = rect.height / canvas.height;
-
-    const rx = Math.min(x1, x2) * scaleX;
-    const ry = Math.min(y1, y2) * scaleY;
-    const rw = Math.abs(x2 - x1) * scaleX;
-    const rh = Math.abs(y2 - y1) * scaleY;
-
-    const pw = rect.width, ph = rect.height;
-
-    overlayEl.innerHTML = `
-      <div style="position:absolute;top:0;left:0;width:100%;height:${ry}px;background:rgba(0,0,0,0.5)"></div>
-      <div style="position:absolute;top:${ry + rh}px;left:0;width:100%;bottom:0;background:rgba(0,0,0,0.5)"></div>
-      <div style="position:absolute;top:${ry}px;left:0;width:${rx}px;height:${rh}px;background:rgba(0,0,0,0.5)"></div>
-      <div style="position:absolute;top:${ry}px;left:${rx + rw}px;right:0;height:${rh}px;background:rgba(0,0,0,0.5)"></div>
-      <div style="position:absolute;top:${ry}px;left:${rx}px;width:${rw}px;height:${rh}px;border:2px solid #6c63ff;box-shadow:inset 0 0 0 1px rgba(108,99,255,0.4);"></div>
-    `;
-  }
-
-  function clearOverlay() {
-    if (overlayEl) { overlayEl.innerHTML = ''; }
-  }
-
-  canvas.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    drawing = true;
-    const pos = getPos(e);
-    startX = pos.x; startY = pos.y;
-    document.getElementById(`card-${pageNum}`).classList.add('active');
-    e.preventDefault();
-  });
-
-  window.addEventListener('mousemove', e => {
-    if (!drawing) return;
-    const pos = getPos(e);
-    drawOverlay(startX, startY, pos.x, pos.y);
-  });
-
-  window.addEventListener('mouseup', e => {
-    if (!drawing) return;
-    drawing = false;
-    const pos = getPos(e);
-    const x = Math.min(startX, pos.x);
-    const y = Math.min(startY, pos.y);
-    const w = Math.abs(pos.x - startX);
-    const h = Math.abs(pos.y - startY);
-
-    if (w > 5 && h > 5) {
-      pageData[pageNum - 1].cropRect = { x, y, w, h };
-      drawOverlay(startX, startY, pos.x, pos.y);
-      updateCropInfo(pageNum);
-    } else {
-      clearCrop(pageNum);
-    }
-    document.getElementById(`card-${pageNum}`).classList.remove('active');
-  });
-
-  // Touch support
-  canvas.addEventListener('touchstart', e => {
-    const pos = getPos(e);
-    startX = pos.x; startY = pos.y;
-    drawing = true;
-    e.preventDefault();
-  }, { passive: false });
-  canvas.addEventListener('touchmove', e => {
-    if (!drawing) return;
-    const pos = getPos(e);
-    drawOverlay(startX, startY, pos.x, pos.y);
-    e.preventDefault();
-  }, { passive: false });
-  canvas.addEventListener('touchend', e => {
-    if (!drawing) return;
-    drawing = false;
-    const lastTouch = e.changedTouches[0];
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const ex = (lastTouch.clientX - rect.left) * scaleX;
-    const ey = (lastTouch.clientY - rect.top) * scaleY;
-    const x = Math.min(startX, ex); const y = Math.min(startY, ey);
-    const w = Math.abs(ex - startX); const h = Math.abs(ey - startY);
-    if (w > 5 && h > 5) {
-      pageData[pageNum - 1].cropRect = { x, y, w, h };
-      drawOverlay(startX, startY, ex, ey);
-      updateCropInfo(pageNum);
-    }
-  });
-
-  // store clearOverlay ref
-  pageData[pageNum - 1]._clearOverlay = clearOverlay;
-}
-
-function updateCropInfo(pageNum) {
-  const pd = pageData[pageNum - 1];
-  if (!pd.cropRect || !pd.pdfDims || !pd.canvasDims) return;
-
-  const scaleX = pd.pdfDims.w / pd.canvasDims.w;
-  const scaleY = pd.pdfDims.h / pd.canvasDims.h;
-
-  const pdfX = Math.round(pd.cropRect.x * scaleX);
-  const pdfY = Math.round(pd.cropRect.y * scaleY);
-  const pdfW = Math.round(pd.cropRect.w * scaleX);
-  const pdfH = Math.round(pd.cropRect.h * scaleY);
-
-  document.getElementById(`vals-${pageNum}`).innerHTML =
-    `PDF: <span>${pdfX}, ${pdfY}</span> &nbsp; גודל: <span>${pdfW} × ${pdfH}</span> pt`;
-
-  const badge = document.getElementById(`badge-${pageNum}`);
-  badge.textContent = '✓ מסומן';
-  badge.className = 'badge has-crop';
-}
-
-function clearCrop(pageNum) {
-  pageData[pageNum - 1].cropRect = null;
-  if (pageData[pageNum - 1]._clearOverlay) pageData[pageNum - 1]._clearOverlay();
-  document.getElementById(`vals-${pageNum}`).innerHTML = '—';
-  const badge = document.getElementById(`badge-${pageNum}`);
-  badge.textContent = 'ללא חיתוך';
-  badge.className = 'badge';
-}
-
-function applyToAll(sourcePageNum) {
-  const src = pageData[sourcePageNum - 1];
-  if (!src.cropRect || !src.canvasDims) { alert('אין חיתוך מסומן בעמוד הזה.'); return; }
-
-  const srcRatioX = src.cropRect.x / src.canvasDims.w;
-  const srcRatioY = src.cropRect.y / src.canvasDims.h;
-  const srcRatioW = src.cropRect.w / src.canvasDims.w;
-  const srcRatioH = src.cropRect.h / src.canvasDims.h;
-
-  for (let i = 0; i < numPages; i++) {
-    if (i === sourcePageNum - 1) continue;
-    const pd = pageData[i];
-    if (!pd.canvasDims) continue;
-    pd.cropRect = {
-      x: srcRatioX * pd.canvasDims.w,
-      y: srcRatioY * pd.canvasDims.h,
-      w: srcRatioW * pd.canvasDims.w,
-      h: srcRatioH * pd.canvasDims.h
-    };
-    updateCropInfo(i + 1);
-    // Redraw overlay for page
-    redrawOverlay(i + 1);
-  }
-  setStatus(`✅ החיתוך הוחל על ${numPages - 1} עמודים נוספים`, false);
-}
-
-function redrawOverlay(pageNum) {
-  const pd = pageData[pageNum - 1];
-  if (!pd.cropRect || !pd._clearOverlay) return;
-
-  // Find the wrap and canvas to redraw overlay
-  const wrap = document.getElementById(`wrap-${pageNum}`);
-  if (!wrap) return;
-
-  const canvas = wrap.querySelector('canvas');
-  if (!canvas) return;
-
-  let overlayEl = wrap.querySelector('.dyn-overlay');
-  if (!overlayEl) {
-    overlayEl = document.createElement('div');
-    overlayEl.className = 'dyn-overlay';
-    overlayEl.style.cssText = `position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;`;
-    wrap.style.position = 'relative';
-    wrap.appendChild(overlayEl);
-  }
-
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / pd.canvasDims.w;
-  const scaleY = rect.height / pd.canvasDims.h;
-  const { x, y, w, h } = pd.cropRect;
-  const rx = x * scaleX, ry = y * scaleY, rw = w * scaleX, rh = h * scaleY;
-
-  overlayEl.innerHTML = `
-    <div style="position:absolute;top:0;left:0;width:100%;height:${ry}px;background:rgba(0,0,0,0.5)"></div>
-    <div style="position:absolute;top:${ry + rh}px;left:0;width:100%;bottom:0;background:rgba(0,0,0,0.5)"></div>
-    <div style="position:absolute;top:${ry}px;left:0;width:${rx}px;height:${rh}px;background:rgba(0,0,0,0.5)"></div>
-    <div style="position:absolute;top:${ry}px;left:${rx + rw}px;right:0;height:${rh}px;background:rgba(0,0,0,0.5)"></div>
-    <div style="position:absolute;top:${ry}px;left:${rx}px;width:${rw}px;height:${rh}px;border:2px solid #6c63ff;"></div>
-  `;
-}
-
-// ─── Download ─────────────────────────────────────────────────────────────────
-async function downloadCropped() {
-  setStatus('מעבד ויוצר PDF...', true);
-  document.getElementById('downloadBtn').disabled = true;
-
-  try {
-    // Reload fresh copy of the doc to edit
-    const freshDoc = await PDFLib.PDFDocument.load(pdfBytes);
-    const pages = freshDoc.getPages();
-
-    for (let i = 0; i < pages.length; i++) {
-      const pd = pageData[i];
-      if (!pd.cropRect || !pd.canvasDims || !pd.pdfDims) continue;
-
-      const page = pages[i];
-      const scaleX = pd.pdfDims.w / pd.canvasDims.w;
-      const scaleY = pd.pdfDims.h / pd.canvasDims.h;
-
-      // Canvas Y is top-down, PDF Y is bottom-up
-      const pdfX = pd.cropRect.x * scaleX;
-      const pdfY = pd.pdfDims.h - (pd.cropRect.y + pd.cropRect.h) * scaleY;
-      const pdfW = pd.cropRect.w * scaleX;
-      const pdfH = pd.cropRect.h * scaleY;
-
-      // Set crop box — this is hard-coded into the PDF
-      page.setCropBox(pdfX, pdfY, pdfW, pdfH);
-      page.setMediaBox(pdfX, pdfY, pdfW, pdfH);
-      page.setBleedBox(pdfX, pdfY, pdfW, pdfH);
-      page.setTrimBox(pdfX, pdfY, pdfW, pdfH);
-    }
-
-    const newBytes = await freshDoc.save();
-    const blob = new Blob([newBytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-
-    const origName = document.getElementById('fileName').textContent.replace(/\.pdf$/i, '');
-    a.download = `${origName}_cropped.pdf`;
-    a.click();
-    URL.revokeObjectURL(url);
-
-    setStatus('✅ PDF הורד בהצלחה!', false);
-  } catch (err) {
+    showProg(total,total,'שומר...');
+    const bytes=await doc.save();
+    const blob=new Blob([bytes],{type:'application/pdf'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=document.getElementById('fileName').textContent.replace(/\.pdf$/i,'')+'_cropped.pdf';
+    a.click();URL.revokeObjectURL(url);
+    hideProg();
+    document.getElementById('statusMsg').textContent='✅ הקובץ הורד בהצלחה!';
+  }catch(err){
     console.error(err);
-    setStatus('❌ שגיאה: ' + err.message, false);
+    hideProg();
+    document.getElementById('statusMsg').textContent='❌ שגיאה: '+err.message;
   }
-
-  document.getElementById('downloadBtn').disabled = false;
+  document.getElementById('dlBtn').disabled=false;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function setStatus(msg, loading) {
-  const el = document.getElementById('status');
-  el.textContent = msg;
-}
+const f=n=>n.toFixed(4);
 
-function showProgress(done, total) {
-  const pct = Math.round((done / total) * 100);
-  document.getElementById('progressFill').style.width = pct + '%';
+function showProg(done,total,msg){
+  document.getElementById('progressWrap').style.display='block';
+  document.getElementById('progFill').style.width=Math.round((done/total)*100)+'%';
+  if(msg)document.getElementById('statusMsg').textContent=msg;
 }
-
-function resetAll() {
-  pdfDoc = null; pdfJsDoc = null; pdfBytes = null; numPages = 0; pageData = [];
+function hideProg(){
+  document.getElementById('progFill').style.width='100%';
+  setTimeout(()=>{document.getElementById('progressWrap').style.display='none'},700);
+}
+function resetAll(){
+  pdfBytes=null;pdfJsDoc=null;numPages=0;pages.length=0;
   document.getElementById('mainLayout').classList.remove('active');
-  document.getElementById('pagesGrid').innerHTML = '';
-  document.getElementById('dropZone').style.display = '';
-  document.getElementById('downloadBtn').disabled = true;
-  document.getElementById('fileInput').value = '';
+  document.getElementById('pagesGrid').innerHTML='';
+  document.getElementById('dropZone').style.display='';
+  document.getElementById('dlBtn').disabled=true;
+  document.getElementById('fileInput').value='';
+  document.getElementById('statusMsg').textContent='';
 }
 </script>
 </body>
