@@ -255,80 +255,80 @@ function applyToAll(src){
 }
 
 // ── TRUE HARD-CODED CROP ──────────────────────────────────────────────────────
-// Technique: create new page of crop size, embed original as Form XObject,
-// apply clipping rect, translate so crop origin → (0,0), draw XObject.
-// The original content outside crop region simply does not exist in the output.
+// Each cropped page is rebuilt from scratch:
+//   1. Embed original page as Form XObject into the output doc
+//   2. Resize the page to the exact crop dimensions
+//   3. Write a new content stream: clip rect → translate → draw XObject
+//   The content outside the crop rect is never drawn — it does not exist.
 async function downloadCropped(){
   document.getElementById('dlBtn').disabled=true;
+  const fileName = document.getElementById('fileName').textContent || 'document';
   showProg(0,numPages,'מכין...');
   try{
-    const doc=await PDFLib.PDFDocument.load(pdfBytes);
-    // We need a separate source to embed pages from
-    const srcDoc=await PDFLib.PDFDocument.load(pdfBytes);
-    const total=doc.getPageCount();
+    // Load two independent copies: one to edit, one as embed source
+    const doc    = await PDFLib.PDFDocument.load(pdfBytes);
+    const srcDoc = await PDFLib.PDFDocument.load(pdfBytes);
+    const total  = doc.getPageCount();
 
     for(let i=1;i<=total;i++){
       showProg(i-1,total,`מחתך עמוד ${i}/${total}...`);
       const pd=pages[i-1];
       if(!pd||!pd.crop)continue;
 
-      // Convert crop from canvas coords to PDF points
-      const scx=pd.pdfW/pd.canvasW, scy=pd.pdfH/pd.canvasH;
-      // Canvas: top-left origin. PDF: bottom-left origin.
-      const cropX = pd.pdfX + pd.crop.x * scx;
-      const cropY = pd.pdfY + pd.pdfH - (pd.crop.y + pd.crop.h) * scy;
+      // ── Convert canvas crop → PDF point space ──────────────────────────────
+      const scx = pd.pdfW / pd.canvasW;
+      const scy = pd.pdfH / pd.canvasH;
+      // PDF Y is bottom-up; canvas Y is top-down
+      const cropX = pd.pdfX +  pd.crop.x                    * scx;
+      const cropY = pd.pdfY + (pd.pdfH - (pd.crop.y + pd.crop.h) * scy);
       const cropW = pd.crop.w * scx;
       const cropH = pd.crop.h * scy;
 
-      // Embed source page as XObject
+      // ── Embed the source page as a Form XObject ────────────────────────────
       const [xobj] = await doc.embedPages([srcDoc.getPage(i-1)]);
 
-      // Get existing page and reset it
-      const pg = doc.getPage(i-1);
+      // pdf-lib gives us a PDFEmbeddedPage; get its name as registered
+      // The tag used inside the stream must match what we register in Resources.
+      const xName = 'Pg' + i;   // simple safe name, no special chars
 
-      // Set page to crop dimensions
+      // ── Rewrite the page ───────────────────────────────────────────────────
+      const pg = doc.getPage(i-1);
       pg.setSize(cropW, cropH);
       pg.setMediaBox(0, 0, cropW, cropH);
       pg.setCropBox(0, 0, cropW, cropH);
       pg.setBleedBox(0, 0, cropW, cropH);
       pg.setTrimBox(0, 0, cropW, cropH);
 
-      // Build content stream:
-      //   q                          — save state
-      //   0 0 cropW cropH re W n     — clipping rectangle, fill nothing
-      //   1 0 0 1 -cropX -cropY cm   — translate so crop origin = (0,0)
-      //   /XObj Do                   — draw embedded page
-      //   Q                          — restore state
-      const xKey = xobj.key.replace(/^\//,'');
+      // New content stream
       const stream = [
         'q',
-        `0 0 ${f(cropW)} ${f(cropH)} re W n`,
-        `1 0 0 1 ${f(-cropX)} ${f(-cropY)} cm`,
-        `/${xKey} Do`,
+        `0 0 ${f(cropW)} ${f(cropH)} re W n`,   // clip to new page size
+        `1 0 0 1 ${f(-cropX)} ${f(-cropY)} cm`,  // shift so crop origin → (0,0)
+        `/${xName} Do`,                           // draw the embedded page
         'Q'
       ].join('\n');
 
       const streamRef = doc.context.register(
-        doc.context.stream(stream,{Length:stream.length})
+        doc.context.stream(stream, { Length: stream.length })
       );
       pg.node.set(PDFLib.PDFName.of('Contents'), streamRef);
 
-      // Register XObject in page resources
-      let res = pg.node.get(PDFLib.PDFName.of('Resources'));
-      if(!res){res=doc.context.obj({});pg.node.set(PDFLib.PDFName.of('Resources'),res)}
-      let xobjs = res.get(PDFLib.PDFName.of('XObject'));
-      if(!xobjs){xobjs=doc.context.obj({});res.set(PDFLib.PDFName.of('XObject'),xobjs)}
-      xobjs.set(PDFLib.PDFName.of(xKey), xobj.ref);
+      // ── Register XObject in page Resources ────────────────────────────────
+      // Build a fresh Resources dict so we don't inherit stale content
+      const xObjDict = doc.context.obj({ [xName]: xobj.ref });
+      const resDict  = doc.context.obj({ XObject: xObjDict });
+      pg.node.set(PDFLib.PDFName.of('Resources'), resDict);
     }
 
     showProg(total,total,'שומר...');
-    const bytes=await doc.save();
-    const blob=new Blob([bytes],{type:'application/pdf'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    a.download=document.getElementById('fileName').textContent.replace(/\.pdf$/i,'')+'_cropped.pdf';
-    a.click();URL.revokeObjectURL(url);
+    const bytes = await doc.save();
+    const blob  = new Blob([bytes],{type:'application/pdf'});
+    const url   = URL.createObjectURL(blob);
+    const a     = document.createElement('a');
+    a.href     = url;
+    a.download = fileName.replace(/\.pdf$/i,'') + '_cropped.pdf';
+    a.click();
+    URL.revokeObjectURL(url);
     hideProg();
     document.getElementById('statusMsg').textContent='✅ הקובץ הורד בהצלחה!';
   }catch(err){
