@@ -57,6 +57,27 @@
   .progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .25s;width:0}
   #statusMsg{font-size:12px;color:var(--text2);margin-top:.4rem;direction:rtl;min-height:1.2em}
   @media(max-width:600px){.container{padding:1rem}#pagesGrid{grid-template-columns:1fr}}
+
+  /* Crop handles */
+  .crop-handle{position:absolute;width:14px;height:14px;background:#fff;border:2px solid var(--accent);border-radius:3px;pointer-events:all;z-index:10;box-shadow:0 1px 4px rgba(0,0,0,.5);}
+  .crop-handle.nw{cursor:nw-resize;top:-7px;left:-7px}
+  .crop-handle.ne{cursor:ne-resize;top:-7px;right:-7px}
+  .crop-handle.sw{cursor:sw-resize;bottom:-7px;left:-7px}
+  .crop-handle.se{cursor:se-resize;bottom:-7px;right:-7px}
+  .crop-handle.n{cursor:n-resize;top:-7px;left:calc(50% - 7px)}
+  .crop-handle.s{cursor:s-resize;bottom:-7px;left:calc(50% - 7px)}
+  .crop-handle.w{cursor:w-resize;top:calc(50% - 7px);left:-7px}
+  .crop-handle.e{cursor:e-resize;top:calc(50% - 7px);right:-7px}
+  .crop-move{cursor:move;position:absolute;top:0;left:0;right:0;bottom:0;z-index:5;}
+
+  /* Preview modal */
+  #previewModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1000;overflow-y:auto;padding:2rem 1rem;}
+  #previewModal.open{display:flex;flex-direction:column;align-items:center;gap:1.5rem;}
+  .preview-bar{display:flex;align-items:center;justify-content:space-between;width:100%;max-width:900px;position:sticky;top:0;background:rgba(15,15,19,.95);padding:.75rem 1rem;border-radius:10px;border:1px solid var(--border);backdrop-filter:blur(8px);}
+  .preview-bar h2{font-size:15px;font-weight:600}
+  .preview-page{background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.5);border-radius:4px;overflow:hidden;max-width:900px;width:100%;}
+  .preview-page img{display:block;width:100%;}
+  .preview-label{font-size:12px;color:var(--text2);align-self:flex-start;max-width:900px;width:100%;}
 </style>
 </head>
 <body>
@@ -84,6 +105,7 @@
       </div>
       <div style="display:flex;align-items:center;gap:.75rem">
         <button class="btn btn-ghost btn-sm" onclick="resetAll()" title="טען קובץ אחר">📂 קובץ חדש</button>
+        <button class="btn btn-ghost btn-sm" id="previewBtn" onclick="openPreview()" disabled>👁 תצוגה מקדימה</button>
         <button class="btn btn-success" id="dlBtn" onclick="downloadCropped()" disabled>⬇️ הורד PDF מחותך</button>
       </div>
     </div>
@@ -94,6 +116,15 @@
     <p id="hint">✏️ גרור עם העכבר על כל עמוד לסימון אזור החיתוך. "החל על כולם" מעתיק חיתוך לכל העמודים.</p>
     <div id="pagesGrid"></div>
   </div>
+</div>
+
+<!-- Preview Modal -->
+<div id="previewModal">
+  <div class="preview-bar">
+    <h2>👁 תצוגה מקדימה — אזורי חיתוך</h2>
+    <button class="btn btn-ghost btn-sm" onclick="closePreview()">✕ סגור</button>
+  </div>
+  <div id="previewPages"></div>
 </div>
 
 <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
@@ -121,6 +152,19 @@ async function loadFile(file){
   document.getElementById('fileName').textContent=file.name;
   showProg(0,1,'טוען...');
   pdfBytes=await file.arrayBuffer();
+
+  // ── CCITTFax detection & auto-conversion ─────────────────────────────────
+  // CCITTFaxDecode is a fax-era compression that browsers can't decode.
+  // We detect it by scanning the raw bytes for the filter name, then
+  // re-render every page to a canvas and rebuild a JPEG-based PDF in memory.
+  // The user sees nothing — the file just works.
+  const rawText = new TextDecoder('latin1').decode(pdfBytes.slice(0, 32768));
+  if(rawText.includes('CCITTFaxDecode') || rawText.includes('CCITTFax')) {
+    showProg(0,1,'מזהה פורמט דחיסה ישן — ממיר אוטומטית...');
+    pdfBytes = await convertCCITTtoPDF(pdfBytes);
+    showProg(0,1,'המרה הושלמה, טוען...');
+  }
+
   pdfJsDoc=await pdfjsLib.getDocument({data:pdfBytes.slice(0)}).promise;
   numPages=pdfJsDoc.numPages;
   document.getElementById('pageCount').textContent=numPages;
@@ -137,6 +181,50 @@ async function loadFile(file){
   }
   hideProg();
   document.getElementById('dlBtn').disabled=false;
+  document.getElementById('previewBtn').disabled=false;
+}
+
+// ── CCITTFax → JPEG-PDF converter ────────────────────────────────────────────
+// Renders every page via PDF.js into an off-screen canvas, then assembles
+// a fresh PDF with JPEG images using pdf-lib. Runs entirely in the browser.
+async function convertCCITTtoPDF(srcBytes) {
+  const srcDoc  = await pdfjsLib.getDocument({data: srcBytes.slice(0)}).promise;
+  const outDoc  = await PDFLib.PDFDocument.create();
+  const total   = srcDoc.numPages;
+
+  for(let i = 1; i <= total; i++) {
+    showProg(i-1, total, `ממיר עמוד ${i}/${total}...`);
+
+    const pjsPage = await srcDoc.getPage(i);
+    const vp      = pjsPage.getViewport({scale: 2.0}); // 2× for quality
+
+    const canvas  = document.createElement('canvas');
+    canvas.width  = vp.width;
+    canvas.height = vp.height;
+    const ctx     = canvas.getContext('2d');
+
+    // White background (CCITTFax images are often transparent/black)
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    await pjsPage.render({canvasContext: ctx, viewport: vp}).promise;
+
+    // Export as JPEG
+    const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+    const jpegBase64  = jpegDataUrl.split(',')[1];
+    const jpegBytes   = Uint8Array.from(atob(jpegBase64), c => c.charCodeAt(0));
+
+    // Original page size (points)
+    const origVp = pjsPage.getViewport({scale: 1});
+    const pgW = origVp.width, pgH = origVp.height;
+
+    const jpegImage = await outDoc.embedJpg(jpegBytes);
+    const page      = outDoc.addPage([pgW, pgH]);
+    page.drawImage(jpegImage, {x:0, y:0, width:pgW, height:pgH});
+  }
+
+  const outBytes = await outDoc.save();
+  return outBytes.buffer;
 }
 
 function buildCard(i){
@@ -192,33 +280,148 @@ async function renderPage(i,plibDoc){
   attachDrag(i,wrap,canvas);
 }
 
-// ── Drag ──────────────────────────────────────────────────────────────────────
+// ── Drag + Handle + Move system ──────────────────────────────────────────────
 function attachDrag(i,wrap,canvas){
-  let active=false,sx=0,sy=0;
+  // mode: 'draw' | 'move' | 'resize-nw'|'ne'|'sw'|'se'|'n'|'s'|'w'|'e'
+  let mode=null, sx=0, sy=0, startCrop=null;
+
   function cpos(e){
     const r=canvas.getBoundingClientRect();
-    const kx=canvas.width/r.width,ky=canvas.height/r.height;
+    const kx=canvas.width/r.width, ky=canvas.height/r.height;
     const cx=e.touches?e.touches[0].clientX:e.clientX;
     const cy=e.touches?e.touches[0].clientY:e.clientY;
-    return{x:Math.max(0,Math.min(canvas.width,(cx-r.left)*kx)),
-           y:Math.max(0,Math.min(canvas.height,(cy-r.top)*ky))};
+    return{
+      x:Math.max(0,Math.min(canvas.width, (cx-r.left)*kx)),
+      y:Math.max(0,Math.min(canvas.height,(cy-r.top)*ky))
+    };
   }
-  canvas.addEventListener('mousedown',e=>{if(e.button!==0)return;active=true;({x:sx,y:sy}=cpos(e));e.preventDefault()});
-  canvas.addEventListener('touchstart',e=>{active=true;({x:sx,y:sy}=cpos(e));e.preventDefault()},{passive:false});
-  window.addEventListener('mousemove',e=>{if(!active)return;const p=cpos(e);drawOv(i,sx,sy,p.x,p.y)});
-  canvas.addEventListener('touchmove',e=>{if(!active)return;const p=cpos(e);drawOv(i,sx,sy,p.x,p.y);e.preventDefault()},{passive:false});
-  function fin(ex,ey){
-    if(!active)return;active=false;
-    const x=Math.min(sx,ex),y=Math.min(sy,ey),w=Math.abs(ex-sx),h=Math.abs(ey-sy);
-    if(w>5&&h>5){pages[i-1].crop={x,y,w,h};drawOv(i,sx,sy,ex,ey);updateBadge(i)}
-    else clearCrop(i);
+  function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+  // Draw new crop on bare canvas
+  canvas.addEventListener('mousedown',e=>{
+    if(e.button!==0)return;
+    mode='draw'; ({x:sx,y:sy}=cpos(e)); e.preventDefault();
+  });
+  canvas.addEventListener('touchstart',e=>{
+    mode='draw'; ({x:sx,y:sy}=cpos(e)); e.preventDefault();
+  },{passive:false});
+
+  // Global move handler
+  function onMove(e){
+    if(!mode)return;
+    const p=cpos(e);
+    const pd=pages[i-1];
+    if(mode==='draw'){
+      drawOv(i,sx,sy,p.x,p.y);
+    } else if(mode==='move'){
+      const dx=p.x-sx, dy=p.y-sy;
+      const nx=clamp(startCrop.x+dx, 0, pd.canvasW-startCrop.w);
+      const ny=clamp(startCrop.y+dy, 0, pd.canvasH-startCrop.h);
+      pd.crop={x:nx,y:ny,w:startCrop.w,h:startCrop.h};
+      redrawOv(i);
+    } else {
+      // resize
+      let {x,y,w,h}=startCrop;
+      const dx=p.x-sx, dy=p.y-sy;
+      if(mode.includes('e')) w=clamp(startCrop.w+dx,20,pd.canvasW-x);
+      if(mode.includes('s')) h=clamp(startCrop.h+dy,20,pd.canvasH-y);
+      if(mode.includes('w')){
+        const nx=clamp(startCrop.x+dx,0,startCrop.x+startCrop.w-20);
+        w=startCrop.x+startCrop.w-nx; x=nx;
+      }
+      if(mode.includes('n')){
+        const ny=clamp(startCrop.y+dy,0,startCrop.y+startCrop.h-20);
+        h=startCrop.y+startCrop.h-ny; y=ny;
+      }
+      pd.crop={x,y,w,h};
+      redrawOv(i);
+    }
   }
-  window.addEventListener('mouseup',e=>{const p=cpos(e);fin(p.x,p.y)});
+  window.addEventListener('mousemove',onMove);
+  canvas.addEventListener('touchmove',e=>{onMove(e);e.preventDefault();},{passive:false});
+
+  function onUp(e){
+    if(!mode)return;
+    if(mode==='draw'){
+      const p=cpos(e);
+      const x=Math.min(sx,p.x),y=Math.min(sy,p.y);
+      const w=Math.abs(p.x-sx),h=Math.abs(p.y-sy);
+      if(w>8&&h>8){pages[i-1].crop={x,y,w,h};redrawOv(i);updateBadge(i);}
+      else if(!pages[i-1].crop) clearCrop(i);
+    } else {
+      updateBadge(i);
+    }
+    mode=null;
+  }
+  window.addEventListener('mouseup',onUp);
   canvas.addEventListener('touchend',e=>{
     const t=e.changedTouches[0],r=canvas.getBoundingClientRect();
     const kx=canvas.width/r.width,ky=canvas.height/r.height;
-    fin((t.clientX-r.left)*kx,(t.clientY-r.top)*ky);
+    // fake mouse event for onUp
+    onUp({touches:[],clientX:t.clientX,clientY:t.clientY,
+          _r:r,_kx:kx,_ky:ky});
   });
+
+  // Start move/resize from overlay handles — called by renderHandles
+  wrap._startInteraction = function(m, e){
+    const p=cpos(e);
+    mode=m; sx=p.x; sy=p.y;
+    startCrop={...pages[i-1].crop};
+    e.preventDefault(); e.stopPropagation();
+  };
+}
+
+// Redraw overlay from stored crop (no start/end coords needed)
+function redrawOv(i){
+  const pd=pages[i-1];
+  if(!pd.crop)return;
+  const {x,y,w,h}=pd.crop;
+  drawOvRect(i,x,y,w,h);
+}
+
+function drawOv(i,x1,y1,x2,y2){
+  const x=Math.min(x1,x2),y=Math.min(y1,y2);
+  const w=Math.abs(x2-x1),h=Math.abs(y2-y1);
+  drawOvRect(i,x,y,w,h);
+}
+
+function drawOvRect(i,x,y,w,h){
+  const pd=pages[i-1];
+  const wrap=document.getElementById(`wrap-${i}`);
+  if(!pd.canvasEl)return;
+  if(!pd.overlayEl){
+    pd.overlayEl=document.createElement('div');
+    pd.overlayEl.style.cssText='position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+    wrap.style.position='relative';
+    wrap.appendChild(pd.overlayEl);
+  }
+  const r=pd.canvasEl.getBoundingClientRect();
+  const kx=r.width/pd.canvasW, ky=r.height/pd.canvasH;
+  const rx=x*kx, ry=y*ky, rw=w*kx, rh=h*ky;
+  const pw=r.width, ph=r.height;
+
+  const HANDLES=['nw','n','ne','w','e','sw','s','se'];
+  const handlesHTML=HANDLES.map(hk=>`
+    <div class="crop-handle ${hk}"
+      onmousedown="document.getElementById('wrap-${i}')._startInteraction('resize-${hk}',event)"
+      ontouchstart="document.getElementById('wrap-${i}')._startInteraction('resize-${hk}',event)">
+    </div>`).join('');
+
+  pd.overlayEl.innerHTML=`
+    <div style="position:absolute;top:0;left:0;width:${pw}px;height:${ry}px;background:rgba(0,0,0,.52)"></div>
+    <div style="position:absolute;top:${ry+rh}px;left:0;width:${pw}px;bottom:0;background:rgba(0,0,0,.52)"></div>
+    <div style="position:absolute;top:${ry}px;left:0;width:${rx}px;height:${rh}px;background:rgba(0,0,0,.52)"></div>
+    <div style="position:absolute;top:${ry}px;left:${rx+rw}px;right:0;height:${rh}px;background:rgba(0,0,0,.52)"></div>
+    <div style="position:absolute;top:${ry}px;left:${rx}px;width:${rw}px;height:${rh}px;
+      border:2px solid #6c63ff;pointer-events:all;cursor:move;"
+      onmousedown="document.getElementById('wrap-${i}')._startInteraction('move',event)"
+      ontouchstart="document.getElementById('wrap-${i}')._startInteraction('move',event)">
+      ${handlesHTML}
+    </div>`;
+
+  const scx=pd.pdfW/pd.canvasW,scy=pd.pdfH/pd.canvasH;
+  document.getElementById(`info-${i}`).innerHTML=
+    `גודל: <span>${Math.round(w*scx)} × ${Math.round(h*scy)}</span> pt`;
 }
 
 function drawOv(i,x1,y1,x2,y2){
@@ -265,10 +468,76 @@ function applyToAll(src){
     if(i===src)continue;
     const t=pages[i-1];if(!t.canvasW)continue;
     t.crop={x:rx*t.canvasW,y:ry*t.canvasH,w:rw*t.canvasW,h:rh*t.canvasH};
-    drawOv(i,t.crop.x,t.crop.y,t.crop.x+t.crop.w,t.crop.y+t.crop.h);
+    redrawOv(i);
     updateBadge(i);
   }
 }
+
+// ── Preview modal ────────────────────────────────────────────────────────────
+async function openPreview(){
+  const modal=document.getElementById('previewModal');
+  const container=document.getElementById('previewPages');
+  container.innerHTML='<p style="color:var(--text2);font-size:13px;direction:rtl">טוען תצוגה מקדימה...</p>';
+  modal.classList.add('open');
+  document.body.style.overflow='hidden';
+
+  container.innerHTML='';
+  let hasCrop=false;
+
+  for(let i=1;i<=numPages;i++){
+    const pd=pages[i-1];
+    if(!pd.canvasEl)continue;
+
+    const label=document.createElement('p');
+    label.className='preview-label';
+
+    if(pd.crop){
+      hasCrop=true;
+      // Draw cropped region onto a temporary canvas
+      const {x,y,w,h}=pd.crop;
+      const tmpCanvas=document.createElement('canvas');
+      tmpCanvas.width=Math.round(w);
+      tmpCanvas.height=Math.round(h);
+      const ctx=tmpCanvas.getContext('2d');
+      ctx.drawImage(pd.canvasEl, x,y,w,h, 0,0,w,h);
+
+      const scx=pd.pdfW/pd.canvasW,scy=pd.pdfH/pd.canvasH;
+      label.textContent=`עמוד ${i} — חתוך ל־${Math.round(w*scx)}×${Math.round(h*scy)} pt`;
+      label.style.color='var(--success)';
+
+      const wrap=document.createElement('div');
+      wrap.className='preview-page';
+      const img=document.createElement('img');
+      img.src=tmpCanvas.toDataURL('image/jpeg',0.9);
+      wrap.appendChild(img);
+      container.appendChild(label);
+      container.appendChild(wrap);
+    } else {
+      label.textContent=`עמוד ${i} — ללא חיתוך (יישמר מלא)`;
+      label.style.color='var(--text2)';
+      container.appendChild(label);
+    }
+  }
+
+  if(!hasCrop){
+    container.innerHTML='<p style="color:var(--text2);font-size:14px;direction:rtl;text-align:center;padding:2rem">לא סומן אף אזור חיתוך. גרור על עמוד כדי לסמן.</p>';
+  }
+}
+
+function closePreview(){
+  document.getElementById('previewModal').classList.remove('open');
+  document.body.style.overflow='';
+}
+
+// Close modal on backdrop click
+document.getElementById('previewModal').addEventListener('click',function(e){
+  if(e.target===this)closePreview();
+});
+// Close on Escape
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePreview();});
+
+// Enable preview button when file loaded
+const _origHideProg=hideProg;
 
 // ── TRUE HARD-CODED CROP ──────────────────────────────────────────────────────
 // Each cropped page is rebuilt from scratch:
@@ -278,6 +547,7 @@ function applyToAll(src){
 //   The content outside the crop rect is never drawn — it does not exist.
 async function downloadCropped(){
   document.getElementById('dlBtn').disabled=true;
+  const pb=document.getElementById('previewBtn');if(pb)pb.disabled=true;
   const fileName = document.getElementById('fileName').textContent || 'document';
   showProg(0,numPages,'מכין...');
   try{
